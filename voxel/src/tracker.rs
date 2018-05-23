@@ -1,10 +1,10 @@
 //! Implements a system to allow lookups of chunks by coordinate.
 
-use super::{Voxel, Chunk, VoxelCoord, canonicalize_chunk};
+use super::{canonicalize_chunk, Chunk, Voxel, VoxelCoord};
 
+use fnv::FnvHashMap;
 use specs::prelude::*;
 use specs::world::Index;
-use fnv::FnvHashMap;
 use std::marker::PhantomData;
 
 /// A global table of chunks, to allow easy lookup of neighbors.
@@ -13,7 +13,7 @@ use std::marker::PhantomData;
 pub struct ChunkTrackerResource {
     // bidirectional mapping
     coord_to_ent: FnvHashMap<VoxelCoord, Entity>,
-    idx_to_coord: FnvHashMap<Index, VoxelCoord>
+    idx_to_coord: FnvHashMap<Index, VoxelCoord>,
 }
 impl ChunkTrackerResource {
     pub fn new() -> Self {
@@ -22,12 +22,17 @@ impl ChunkTrackerResource {
 
     #[inline(always)]
     pub fn get_chunk_ent(&self, coord: VoxelCoord) -> Option<Entity> {
-        self.coord_to_ent.get(&canonicalize_chunk(coord)).map(Clone::clone)
+        self.coord_to_ent
+            .get(&canonicalize_chunk(coord))
+            .map(Clone::clone)
     }
 
-    pub fn get_chunk<'a, V: Voxel>(&self, chunks: &'a ReadStorage<Chunk<V>>, coord: VoxelCoord) -> Option<&'a Chunk<V>> {
-        self.get_chunk_ent(coord)
-            .and_then(|ent| chunks.get(ent))
+    pub fn get_chunk<'a, V: Voxel>(
+        &self,
+        chunks: &'a ReadStorage<Chunk<V>>,
+        coord: VoxelCoord,
+    ) -> Option<&'a Chunk<V>> {
+        self.get_chunk_ent(coord).and_then(|ent| chunks.get(ent))
     }
 }
 
@@ -35,7 +40,7 @@ impl ChunkTrackerResource {
 pub struct ChunkTrackerSystem<V: Voxel> {
     inserted_ids: ReaderId<InsertedFlag>,
     removed_ids: ReaderId<RemovedFlag>,
-    _phantom: PhantomData<V>
+    _phantom: PhantomData<V>,
 }
 impl<V: Voxel> ChunkTrackerSystem<V> {
     pub fn for_world(world: &World) -> Self {
@@ -44,7 +49,9 @@ impl<V: Voxel> ChunkTrackerSystem<V> {
         let removed_ids = chunks.track_removed();
 
         ChunkTrackerSystem {
-            inserted_ids, removed_ids, _phantom: PhantomData
+            inserted_ids,
+            removed_ids,
+            _phantom: PhantomData,
         }
     }
 }
@@ -52,13 +59,16 @@ impl<'a, V: Voxel> System<'a> for ChunkTrackerSystem<V> {
     type SystemData = (
         Entities<'a>,
         ReadStorage<'a, Chunk<V>>,
-        Write<'a, ChunkTrackerResource>
+        Write<'a, ChunkTrackerResource>,
     );
 
     fn run(&mut self, (entities, chunks, mut tracker): Self::SystemData) {
         for removed in chunks.removed().read(&mut self.removed_ids) {
             let idx = **removed;
-            let coord = *tracker.idx_to_coord.get(&idx).expect("removed but not present");
+            let coord = *tracker
+                .idx_to_coord
+                .get(&idx)
+                .expect("removed but not present");
 
             debug_assert!(tracker.idx_to_coord.contains_key(&idx));
             debug_assert!(tracker.coord_to_ent.contains_key(&coord));
@@ -114,7 +124,7 @@ impl<'a: 'b, 'b, V: Voxel> Lookup<'a, 'b, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ::TestVoxel;
+    use TestVoxel;
 
     #[test]
     fn test_tracker() {
@@ -123,14 +133,21 @@ mod tests {
         world.add_resource(ChunkTrackerResource::new());
 
         let mut dispatcher = DispatcherBuilder::new()
-            .with(ChunkTrackerSystem::<TestVoxel>::for_world(&world), "chunk_tracker", &[])
+            .with(
+                ChunkTrackerSystem::<TestVoxel>::for_world(&world),
+                "chunk_tracker",
+                &[],
+            )
             .build();
 
         dispatcher.dispatch(&mut world.res);
 
         // add entity
         let coord = VoxelCoord::new(0, 0, 0);
-        let ent = world.create_entity().with(Chunk::<TestVoxel>::empty(coord)).build();
+        let ent = world
+            .create_entity()
+            .with(Chunk::<TestVoxel>::empty(coord))
+            .build();
         dispatcher.dispatch(&mut world.res);
         {
             let tracker = world.read_resource::<ChunkTrackerResource>();

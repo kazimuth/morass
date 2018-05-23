@@ -1,21 +1,21 @@
 //! Creates Amethyst Meshes from voxels.
-//! 
+//!
 //! Includes a system to automatically track and re-mesh modified voxels.
-//! 
+//!
 //! Meshing takes approx. .15 ms (.00015 s) for a single voxel.
 
-use super::{Chunk, ChunkTrackerResource, Coord, VoxelCoord, Voxel, CHUNK_SIZE};
+use super::{Chunk, ChunkTrackerResource, Coord, Voxel, VoxelCoord, CHUNK_SIZE};
 
 use std::iter::repeat;
-use std::time::Duration;
 use std::marker::PhantomData;
+use std::time::Duration;
 
-use amethyst::renderer::{Separate, Color, Position, Normal, Mesh, Material, ComboMeshCreator};
+use amethyst::assets::{AssetStorage, Handle, Loader};
+use amethyst::renderer::{Color, ComboMeshCreator, Material, Mesh, Normal, Position, Separate};
 use cgmath::Vector3;
+use hibitset::BitSetLike;
 use soft_time_limit::TimeLimiter;
 use specs::prelude::*;
-use amethyst::assets::{Loader, AssetStorage, Handle};
-use hibitset::BitSetLike;
 
 pub struct InProgress {
     pub color: Vec<Separate<Color>>,
@@ -31,7 +31,7 @@ pub enum Direction {
     North = 2,
     West = 3,
     Down = 4,
-    South = 5
+    South = 5,
 }
 impl Direction {
     pub fn all() -> [Direction; 6] {
@@ -48,39 +48,61 @@ impl Direction {
 // the array iteration order matters 'cause we'll do greedy meshing later;
 // and I want the points to make sense when being greedy.
 const NORMALS: [VoxelCoord; 6] = [
-    VoxelCoord {x: 1,y: 0,z: 0},
-    VoxelCoord {x: 0,y: 1,z: 0},
-    VoxelCoord {x: 0,y: 0,z: 1},
-    VoxelCoord {x:-1,y: 0,z: 0},
-    VoxelCoord {x: 0,y:-1,z: 0},
-    VoxelCoord {x: 0,y: 0,z:-1},
+    VoxelCoord { x: 1, y: 0, z: 0 },
+    VoxelCoord { x: 0, y: 1, z: 0 },
+    VoxelCoord { x: 0, y: 0, z: 1 },
+    VoxelCoord { x: -1, y: 0, z: 0 },
+    VoxelCoord { x: 0, y: -1, z: 0 },
+    VoxelCoord { x: 0, y: 0, z: -1 },
 ];
 const ITERS: [(VoxelCoord, VoxelCoord); 6] = [
-    (VoxelCoord {x: 0,y: 1,z: 0}, VoxelCoord {x: 0,y: 0,z: 1}),
-    (VoxelCoord {x: 1,y: 0,z: 0}, VoxelCoord {x: 0,y: 0,z: 1}),
-    (VoxelCoord {x: 1,y: 0,z: 0}, VoxelCoord {x: 0,y: 1,z: 0}),
-    (VoxelCoord {x: 0,y:-1,z: 0}, VoxelCoord {x: 0,y: 0,z:-1}),
-    (VoxelCoord {x:-1,y: 0,z: 0}, VoxelCoord {x: 0,y: 0,z:-1}),
-    (VoxelCoord {x:-1,y: 0,z: 0}, VoxelCoord {x: 0,y:-1,z: 0}),
+    (
+        VoxelCoord { x: 0, y: 1, z: 0 },
+        VoxelCoord { x: 0, y: 0, z: 1 },
+    ),
+    (
+        VoxelCoord { x: 1, y: 0, z: 0 },
+        VoxelCoord { x: 0, y: 0, z: 1 },
+    ),
+    (
+        VoxelCoord { x: 1, y: 0, z: 0 },
+        VoxelCoord { x: 0, y: 1, z: 0 },
+    ),
+    (
+        VoxelCoord { x: 0, y: -1, z: 0 },
+        VoxelCoord { x: 0, y: 0, z: -1 },
+    ),
+    (
+        VoxelCoord { x: -1, y: 0, z: 0 },
+        VoxelCoord { x: 0, y: 0, z: -1 },
+    ),
+    (
+        VoxelCoord { x: -1, y: 0, z: 0 },
+        VoxelCoord { x: 0, y: -1, z: 0 },
+    ),
 ];
-const BACKWARDS: [bool; 6] = [
-    false, false, false,
-    true, true, true
-];
+const BACKWARDS: [bool; 6] = [false, false, false, true, true, true];
 
 /// Mesh a single direction of a single layer.
-/// 
+///
 /// direction is in (1 - 6)
-/// 
+///
 /// TODO: greedy meshing for this layer
-pub fn mesh_layer<V: Voxel>(chunk1: &Chunk<V>, level1: i16,
-                            chunk2: &Chunk<V>, level2: i16,
-                            direction: Direction,
-                            in_progress: &mut InProgress) {
-
+pub fn mesh_layer<V: Voxel>(
+    chunk1: &Chunk<V>,
+    level1: i16,
+    chunk2: &Chunk<V>,
+    level2: i16,
+    direction: Direction,
+    in_progress: &mut InProgress,
+) {
     let direction = direction as usize;
     let normal = NORMALS[direction];
-    let axis = VoxelCoord { x: normal.x.abs(), y: normal.y.abs(), z: normal.z.abs() };
+    let axis = VoxelCoord {
+        x: normal.x.abs(),
+        y: normal.y.abs(),
+        z: normal.z.abs(),
+    };
     let (iter1, iter2) = ITERS[direction];
     let backwards = BACKWARDS[direction];
 
@@ -92,11 +114,15 @@ pub fn mesh_layer<V: Voxel>(chunk1: &Chunk<V>, level1: i16,
     let iter1f: Coord = iter1.cast().unwrap();
     let iter2f: Coord = iter2.cast().unwrap();
     let positions = [
-        ( iter1f + iter2f), (-iter1f + iter2f), (-iter1f - iter2f),
-
-        ( iter1f - iter2f), ( iter1f + iter2f), (-iter1f - iter2f),
+        (iter1f + iter2f),
+        (-iter1f + iter2f),
+        (-iter1f - iter2f),
+        (iter1f - iter2f),
+        (iter1f + iter2f),
+        (-iter1f - iter2f),
     ];
-    let normal_f: Separate<Normal> = Separate::new([normal.x as f32, normal.y as f32, normal.z as f32]);
+    let normal_f: Separate<Normal> =
+        Separate::new([normal.x as f32, normal.y as f32, normal.z as f32]);
 
     let initlen = in_progress.color.len();
 
@@ -125,7 +151,9 @@ pub fn mesh_layer<V: Voxel>(chunk1: &Chunk<V>, level1: i16,
 
                 for p in positions.iter() {
                     in_progress.color.push(kind1.color());
-                    in_progress.position.push(Separate::new((face_center + p).into()));
+                    in_progress
+                        .position
+                        .push(Separate::new((face_center + p).into()));
                 }
             }
             loc += iter2;
@@ -135,12 +163,13 @@ pub fn mesh_layer<V: Voxel>(chunk1: &Chunk<V>, level1: i16,
     let n = in_progress.position.len() - initlen;
 
     in_progress.normal.extend(repeat(normal_f).take(n));
-
 }
 
-pub fn mesh_chunk<V: Voxel>(coord: VoxelCoord,
-                            tracker: &ChunkTrackerResource,
-                            chunks: &ReadStorage<Chunk<V>>) -> ComboMeshCreator {
+pub fn mesh_chunk<V: Voxel>(
+    coord: VoxelCoord,
+    tracker: &ChunkTrackerResource,
+    chunks: &ReadStorage<Chunk<V>>,
+) -> ComboMeshCreator {
     let mut result = InProgress {
         color: Vec::new(),
         position: Vec::new(),
@@ -149,8 +178,8 @@ pub fn mesh_chunk<V: Voxel>(coord: VoxelCoord,
     let center = tracker.get_chunk(chunks, coord).unwrap();
 
     let empty = Chunk {
-        coord: VoxelCoord::new(0,0,0),
-        voxels: [[[V::empty(); CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE]
+        coord: VoxelCoord::new(0, 0, 0),
+        voxels: [[[V::empty(); CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
     };
 
     for direction in Direction::all().into_iter() {
@@ -164,11 +193,17 @@ pub fn mesh_chunk<V: Voxel>(coord: VoxelCoord,
 
         // mesh interior faces
         for offset in start..end {
-            mesh_layer(center, offset, center, offset + sub, *direction, &mut result);
+            mesh_layer(
+                center,
+                offset,
+                center,
+                offset + sub,
+                *direction,
+                &mut result,
+            );
         }
         let adjacent_coord = coord + NORMALS[i] * CHUNK_SIZE as i16;
-        let adjacent = tracker.get_chunk(chunks, adjacent_coord)
-                              .unwrap_or(&empty);
+        let adjacent = tracker.get_chunk(chunks, adjacent_coord).unwrap_or(&empty);
 
         // TODO
         mesh_layer(center, start, adjacent, start, *direction, &mut result);
@@ -177,15 +212,14 @@ pub fn mesh_chunk<V: Voxel>(coord: VoxelCoord,
     let InProgress {
         position,
         color,
-        normal
+        normal,
     } = result;
 
     (position, Some(color), None, Some(normal), None).into()
 }
 
-
 /// Tracks modified voxels and re-meshes them.
-/// 
+///
 /// Note that this uses specs' FlaggedStorage, which means that
 /// whenever you take a &mut chunk, that chunk is marked as modified.
 /// This means that you should never mutably iterate all chunks!
@@ -203,7 +237,7 @@ pub struct ChunkMesherSystem<V: Voxel> {
     time_limit: Duration,
 
     to_do: BitSet,
-    _phantom: PhantomData<V>
+    _phantom: PhantomData<V>,
 }
 
 impl<V: Voxel> ChunkMesherSystem<V> {
@@ -218,7 +252,7 @@ impl<V: Voxel> ChunkMesherSystem<V> {
             time_limiter: TimeLimiter::new(),
             time_limit,
             to_do: BitSet::new(),
-            _phantom: PhantomData
+            _phantom: PhantomData,
         }
     }
 }
@@ -234,7 +268,10 @@ impl<'a, V: Voxel> System<'a> for ChunkMesherSystem<V> {
         WriteStorage<'a, Material>,
     );
 
-    fn run(&mut self, (entities, tracker, loader, assets, chunks, mut meshes, mut materials): Self::SystemData) {
+    fn run(
+        &mut self,
+        (entities, tracker, loader, assets, chunks, mut meshes, mut materials): Self::SystemData,
+    ) {
         chunks.populate_inserted(&mut self.inserted_ids, &mut self.to_do);
         chunks.populate_modified(&mut self.modified_ids, &mut self.to_do);
         for removed in chunks.removed().read(&mut self.removed_ids) {
@@ -258,7 +295,9 @@ impl<'a, V: Voxel> System<'a> for ChunkMesherSystem<V> {
                     let mesh: Handle<Mesh> = loader.load_from_data(pre_mesh.into(), (), &*assets);
 
                     meshes.insert(ent, mesh).expect("mesh insert failed");
-                    materials.insert(ent, mat.clone()).expect("mat insert failed");
+                    materials
+                        .insert(ent, mat.clone())
+                        .expect("mat insert failed");
 
                     completed.push(idx);
 

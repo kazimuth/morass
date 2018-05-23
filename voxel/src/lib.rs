@@ -1,36 +1,36 @@
 //! A simple voxel system, tightly bound to Amethyst.
-//! 
+//!
 //! Voxels are stored in chunks, 16x16x16 arrays of voxel information. This is a good data-structure for minecraft-like
 //! worlds with large voxels; for worlds with finer voxels you probably want something with better compression.
-//! 
+//!
 //! The voxel mesher currently only knows how to draw cubes. Eventually it'll be extended to allow arbitrary meshes for
 //! some voxels.
-//! 
+//!
 //! If you have something that behaves sort of like a voxel but has a lot of internal state, that should probably be an
 //! entity instead.
-//! 
+//!
 //! Coordinate system notes:
-//! 
+//!
 //! - Individual voxels are always of size 1 in world coordinates.
-//! 
+//!
 //! - Their centers are at integer multiples of [1,1,1]; their corners are at those centers offset by .5.
-//! 
+//!
 //! - Chunks are meshed such that their world coordinate corresponds to the CENTER of their [0,0,0]th voxel.
-//! 
+//!
 //! - World coordinates should be multiples of CHUNK_SIZE_WORLD; i.e. the "starting" chunk is at location 0,0,0,
 //!   and the next chunk in the x direction is at CHUNK_SIZE_WORLD,0,0, and so on.
 
+extern crate amethyst;
 extern crate cgmath;
 extern crate fnv;
-extern crate specs;
-extern crate amethyst;
-extern crate soft_time_limit;
 extern crate hibitset;
 extern crate smallvec;
+extern crate soft_time_limit;
+extern crate specs;
 
-use specs::prelude::*;
+use amethyst::renderer::{Color, Separate};
 use specs::HashMapStorage;
-use amethyst::renderer::{Separate, Color};
+use specs::prelude::*;
 
 pub mod delta;
 pub mod mesh;
@@ -51,13 +51,21 @@ pub type VoxelCoord = cgmath::Vector3<i16>;
 /// Round to the canonical coordinate of the containing voxel, i.e. the center
 #[inline(always)]
 pub fn canonicalize(coord: Coord) -> VoxelCoord {
-    VoxelCoord { x: coord.x.round() as i16, y: coord.y.round() as i16, z: coord.z.round() as i16 }
+    VoxelCoord {
+        x: coord.x.round() as i16,
+        y: coord.y.round() as i16,
+        z: coord.z.round() as i16,
+    }
 }
 
 /// Round to the canonical coordinate of the containing chunk, i.e. the center of the chunks [0,0,0] voxel
 #[inline(always)]
 pub fn canonicalize_chunk(coord: VoxelCoord) -> VoxelCoord {
-    let coord = VoxelCoord { x: coord.x as i16, y: coord.y as i16, z: coord.z as i16 };
+    let coord = VoxelCoord {
+        x: coord.x as i16,
+        y: coord.y as i16,
+        z: coord.z as i16,
+    };
     coord - (coord % (CHUNK_SIZE as i16))
 }
 
@@ -80,7 +88,7 @@ pub trait Voxel: Copy + Send + Sync + 'static {
 pub struct Chunk<V: Voxel> {
     /// Redundant with transform; both must be set correctly.
     pub coord: VoxelCoord,
-    pub voxels: [[[V; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE]
+    pub voxels: [[[V; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
 }
 impl<V: Voxel> Chunk<V> {
     pub fn empty(coord: VoxelCoord) -> Self {
@@ -94,11 +102,11 @@ impl<V: Voxel> Chunk<V> {
     }
     #[inline(always)]
     pub unsafe fn index_unchecked(&self, index: VoxelCoord) -> &V {
-        &self.voxels.get_unchecked(index.x as usize)
-                    .get_unchecked(index.y as usize)
-                    .get_unchecked(index.z as usize)
+        &self.voxels
+            .get_unchecked(index.x as usize)
+            .get_unchecked(index.y as usize)
+            .get_unchecked(index.z as usize)
     }
-
 }
 impl<V: Voxel> Component for Chunk<V> {
     type Storage = FlaggedStorage<Self, HashMapStorage<Self>>;
@@ -108,7 +116,7 @@ impl<V: Voxel> Component for Chunk<V> {
 pub enum TestVoxel {
     Air,
     Rock,
-    Grass
+    Grass,
 }
 impl Voxel for TestVoxel {
     fn empty() -> Self {
@@ -119,9 +127,9 @@ impl Voxel for TestVoxel {
     }
     fn color(&self) -> Separate<Color> {
         match *self {
-            TestVoxel::Air => Separate::new([0.,0.,0.,0.]),
-            TestVoxel::Rock => Separate::new([0.2,0.2,0.2,1.]),
-            TestVoxel::Grass => Separate::new([0.,8.,0.,1.])
+            TestVoxel::Air => Separate::new([0., 0., 0., 0.]),
+            TestVoxel::Rock => Separate::new([0.2, 0.2, 0.2, 1.]),
+            TestVoxel::Grass => Separate::new([0., 8., 0., 1.]),
         }
     }
 }
