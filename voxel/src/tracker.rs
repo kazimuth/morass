@@ -10,12 +10,12 @@ use std::marker::PhantomData;
 /// A global table of chunks, to allow easy lookup of neighbors.
 /// Doesn't track chunk movement; if you reassign a chunk location nothing will happen.
 #[derive(Default, Debug)]
-pub struct ChunkTrackerResource {
+pub struct ChunkTracker {
     // bidirectional mapping
     coord_to_ent: FnvHashMap<VoxelCoord, Entity>,
     idx_to_coord: FnvHashMap<Index, VoxelCoord>,
 }
-impl ChunkTrackerResource {
+impl ChunkTracker {
     pub fn new() -> Self {
         Default::default()
     }
@@ -36,7 +36,7 @@ impl ChunkTrackerResource {
     }
 }
 
-/// A system that registers new chunks in the ChunkTrackerResource.
+/// A system that registers new chunks in the ChunkTracker.
 pub struct ChunkTrackerSystem<V: Voxel> {
     inserted_ids: ReaderId<InsertedFlag>,
     removed_ids: ReaderId<RemovedFlag>,
@@ -59,7 +59,7 @@ impl<'a, V: Voxel> System<'a> for ChunkTrackerSystem<V> {
     type SystemData = (
         Entities<'a>,
         ReadStorage<'a, Chunk<V>>,
-        Write<'a, ChunkTrackerResource>,
+        Write<'a, ChunkTracker>,
     );
 
     fn run(&mut self, (entities, chunks, mut tracker): Self::SystemData) {
@@ -91,7 +91,7 @@ impl<'a, V: Voxel> System<'a> for ChunkTrackerSystem<V> {
 }
 
 /*
-use super::{Voxel, VoxelCoord, Chunk, ChunkTrackerResource};
+use super::{Voxel, VoxelCoord, Chunk, ChunkTracker};
 
 use std::marker::PhantomData;
 
@@ -111,7 +111,7 @@ const LRU_SIZE: usize = 4;
 pub struct Lookup<'a: 'b, 'b, V: Voxel> {
     storage: *const ReadStorage<'a, Chunk<V>>,
     _borrow: PhantomData<&'b ReadStorage<'a, Chunk<V>>>,
-    tracker: &'b Read<'a, ChunkTrackerResource>,
+    tracker: &'b Read<'a, ChunkTracker>,
     slots: [*const Chunk<V>; LRU_SIZE],
     coords: [VoxelCoord; LRU_SIZE],
     // playing it safe WRT: UB
@@ -130,7 +130,7 @@ mod tests {
     fn test_tracker() {
         let mut world = World::new();
         world.register::<Chunk<TestVoxel>>();
-        world.add_resource(ChunkTrackerResource::new());
+        world.add_resource(ChunkTracker::new());
 
         let mut dispatcher = DispatcherBuilder::new()
             .with(
@@ -150,7 +150,7 @@ mod tests {
             .build();
         dispatcher.dispatch(&mut world.res);
         {
-            let tracker = world.read_resource::<ChunkTrackerResource>();
+            let tracker = world.read_resource::<ChunkTracker>();
             assert_eq!(tracker.get_chunk_ent(VoxelCoord::new(0, 0, 0)), Some(ent));
         }
 
@@ -158,7 +158,7 @@ mod tests {
         world.delete_entity(ent).unwrap();
         dispatcher.dispatch(&mut world.res);
         {
-            let tracker = world.read_resource::<ChunkTrackerResource>();
+            let tracker = world.read_resource::<ChunkTracker>();
             assert_eq!(tracker.get_chunk_ent(VoxelCoord::new(0, 0, 0)), None);
         }
     }

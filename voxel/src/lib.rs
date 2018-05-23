@@ -22,11 +22,16 @@
 
 extern crate amethyst;
 extern crate cgmath;
+#[macro_use]
+extern crate log;
 extern crate fnv;
 extern crate hibitset;
-extern crate smallvec;
+extern crate parking_lot;
 extern crate soft_time_limit;
 extern crate specs;
+
+use std::fmt::Debug;
+use std::ops::{Index, IndexMut};
 
 use amethyst::renderer::{Color, Separate};
 use specs::HashMapStorage;
@@ -37,7 +42,7 @@ pub mod mesh;
 pub mod raycast;
 pub mod tracker;
 
-pub use tracker::ChunkTrackerResource;
+pub use tracker::ChunkTracker;
 
 // TODO: chunk insertion
 // need to mark adjacent chunks for re-meshing, as well
@@ -77,7 +82,7 @@ pub const CHUNK_SIZE_WORLD: f32 = CHUNK_SIZE as f32;
 /// Must be copy: if you want to have stuff in your individual voxels that need heap-allocated stuff,
 /// they should be their own entities.
 /// Try and keep your voxels as small as possible to reduce memory usage; ideally they'd be 1 byte in size.
-pub trait Voxel: Copy + Send + Sync + 'static {
+pub trait Voxel: Copy + Debug + Default + Send + Sync + 'static {
     fn empty() -> Self;
     fn is_transparent(&self) -> bool;
     /// TODO switch to textures
@@ -97,10 +102,6 @@ impl<V: Voxel> Chunk<V> {
         Chunk { coord, voxels }
     }
     #[inline(always)]
-    pub fn index(&self, index: VoxelCoord) -> &V {
-        &self.voxels[index.x as usize][index.y as usize][index.z as usize]
-    }
-    #[inline(always)]
     pub unsafe fn index_unchecked(&self, index: VoxelCoord) -> &V {
         &self.voxels
             .get_unchecked(index.x as usize)
@@ -108,6 +109,21 @@ impl<V: Voxel> Chunk<V> {
             .get_unchecked(index.z as usize)
     }
 }
+impl<V: Voxel> Index<VoxelCoord> for Chunk<V> {
+    type Output = V;
+
+    #[inline(always)]
+    fn index(&self, index: VoxelCoord) -> &V {
+        &self.voxels[index.x as usize][index.y as usize][index.z as usize]
+    }
+}
+impl<V: Voxel> IndexMut<VoxelCoord> for Chunk<V> {
+    #[inline(always)]
+    fn index_mut(&mut self, index: VoxelCoord) -> &mut V {
+        &mut self.voxels[index.x as usize][index.y as usize][index.z as usize]
+    }
+}
+
 impl<V: Voxel> Component for Chunk<V> {
     type Storage = FlaggedStorage<Self, HashMapStorage<Self>>;
 }
@@ -117,6 +133,11 @@ pub enum TestVoxel {
     Air,
     Rock,
     Grass,
+}
+impl Default for TestVoxel {
+    fn default() -> Self {
+        TestVoxel::Air
+    }
 }
 impl Voxel for TestVoxel {
     fn empty() -> Self {

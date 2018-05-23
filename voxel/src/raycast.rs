@@ -87,7 +87,8 @@ pub fn raycast<F: FnMut(VoxelCoord) -> bool>(
             t_max_z += t_dz;
         }
     }
-    panic!("nothing hit");
+    error!("raycast: {:?} {:?}, nothing hit", start, direction);
+    (0.0, start_voxel)
 }
 
 fn init(c: f32, dc: f32) -> (f32, f32) {

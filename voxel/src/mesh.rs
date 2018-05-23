@@ -4,7 +4,7 @@
 //!
 //! Meshing takes approx. .15 ms (.00015 s) for a single voxel.
 
-use super::{Chunk, ChunkTrackerResource, Coord, Voxel, VoxelCoord, CHUNK_SIZE};
+use super::{Chunk, ChunkTracker, Coord, Voxel, VoxelCoord, CHUNK_SIZE};
 
 use std::iter::repeat;
 use std::marker::PhantomData;
@@ -167,7 +167,7 @@ pub fn mesh_layer<V: Voxel>(
 
 pub fn mesh_chunk<V: Voxel>(
     coord: VoxelCoord,
-    tracker: &ChunkTrackerResource,
+    tracker: &ChunkTracker,
     chunks: &ReadStorage<Chunk<V>>,
 ) -> ComboMeshCreator {
     let mut result = InProgress {
@@ -175,7 +175,9 @@ pub fn mesh_chunk<V: Voxel>(
         position: Vec::new(),
         normal: Vec::new(),
     };
-    let center = tracker.get_chunk(chunks, coord).unwrap();
+    let center = tracker
+        .get_chunk(chunks, coord)
+        .expect("can't mesh nonexistent chunk!");
 
     let empty = Chunk {
         coord: VoxelCoord::new(0, 0, 0),
@@ -260,7 +262,7 @@ impl<V: Voxel> ChunkMesherSystem<V> {
 impl<'a, V: Voxel> System<'a> for ChunkMesherSystem<V> {
     type SystemData = (
         Entities<'a>,
-        ReadExpect<'a, ChunkTrackerResource>,
+        ReadExpect<'a, ChunkTracker>,
         ReadExpect<'a, Loader>,
         ReadExpect<'a, AssetStorage<Mesh>>,
         ReadStorage<'a, Chunk<V>>,
@@ -294,13 +296,14 @@ impl<'a, V: Voxel> System<'a> for ChunkMesherSystem<V> {
                     let pre_mesh = mesh_chunk(chunk.coord, &*tracker, &chunks);
                     let mesh: Handle<Mesh> = loader.load_from_data(pre_mesh.into(), (), &*assets);
 
-                    meshes.insert(ent, mesh).expect("mesh insert failed");
-                    materials
+                    let _ = meshes
+                        .insert(ent, mesh)
+                        .map_err(|e| error!("mesh insertion failed! {:?}", e));
+                    let _ = materials
                         .insert(ent, mat.clone())
-                        .expect("mat insert failed");
+                        .map_err(|_| error!("material insertion failed!"));
 
                     completed.push(idx);
-
                     true
                 } else {
                     false
