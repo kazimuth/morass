@@ -1,0 +1,6 @@
+[package]
+name = "soft_time_limit"
+version = "0.1.0"
+authors = ["James Gilles <jhgilles@mit.edu>"]
+
+[dependencies]

@@ -1,48 +1,63 @@
 //! A simple voxel system, tightly bound to Amethyst.
 //! 
-//! Voxels are stored in chunks, large blocks of 
+//! Voxels are stored in chunks, 16x16x16 arrays of voxel information. This is a good data-structure for minecraft-like
+//! worlds with large voxels; for worlds with finer voxels you probably want something with better compression.
+//! 
+//! The voxel mesher currently only knows how to draw cubes. Eventually it'll be extended to allow arbitrary meshes for
+//! some voxels.
+//! 
+//! If you have something that behaves sort of like a voxel but has a lot of internal state, that should probably be an
+//! entity instead.
 //! 
 //! Coordinate system notes:
-//! Individual voxels are always of size 1 in world coordinates.
-//! Their centers are at integer multiples of [1,1,1]; their corners are at those centers offset by .5.
-//! Chunks are meshed such that their world coordinate corresponds to the CENTER of their [0,0,0]th voxel.
-//! World coordinates should be multiples of CHUNK_SIZE_WORLD; i.e. the "starting" chun is at location 0,0,0,
-//! and the next chunk in the x direction is at CHUNK_SIZE_WORLD,0,0, and so on.
+//! 
+//! - Individual voxels are always of size 1 in world coordinates.
+//! 
+//! - Their centers are at integer multiples of [1,1,1]; their corners are at those centers offset by .5.
+//! 
+//! - Chunks are meshed such that their world coordinate corresponds to the CENTER of their [0,0,0]th voxel.
+//! 
+//! - World coordinates should be multiples of CHUNK_SIZE_WORLD; i.e. the "starting" chunk is at location 0,0,0,
+//!   and the next chunk in the x direction is at CHUNK_SIZE_WORLD,0,0, and so on.
 
 extern crate cgmath;
 extern crate fnv;
 extern crate specs;
 extern crate amethyst;
-
-use std::marker::PhantomData;
+extern crate soft_time_limit;
+extern crate hibitset;
+extern crate smallvec;
 
 use specs::prelude::*;
 use specs::HashMapStorage;
-use specs::world::Index;
-use fnv::FnvHashMap;
-
 use amethyst::renderer::{Separate, Color};
 
+pub mod delta;
 pub mod mesh;
+pub mod raycast;
+pub mod tracker;
 
-/// A world coordinate.
+pub use tracker::ChunkTrackerResource;
+
+// TODO: chunk insertion
+// need to mark adjacent chunks for re-meshing, as well
+
+/// A world coordinate as used by Amethyst.
 pub type Coord = cgmath::Vector3<f32>;
 
-/// A coordinate of a chunk.
-/// Note that these are multiples of CHUNK_SIZE_WORLD.
-pub type ChunkCoord = cgmath::Vector3<i16>;
+/// An (integer-vector) coordinate of a voxel.
+pub type VoxelCoord = cgmath::Vector3<i16>;
 
 /// Round to the canonical coordinate of the containing voxel, i.e. the center
 #[inline(always)]
-pub fn canonicalize(coord: Coord) -> Coord {
-    Coord { x: coord.x.round(), y: coord.y.round(), z: coord.z.round() }
+pub fn canonicalize(coord: Coord) -> VoxelCoord {
+    VoxelCoord { x: coord.x.round() as i16, y: coord.y.round() as i16, z: coord.z.round() as i16 }
 }
 
 /// Round to the canonical coordinate of the containing chunk, i.e. the center of the chunks [0,0,0] voxel
 #[inline(always)]
-pub fn canonicalize_chunk(coord: Coord) -> ChunkCoord {
-    let coord = canonicalize(coord);
-    let coord = ChunkCoord { x: coord.x as i16, y: coord.y as i16, z: coord.z as i16 };
+pub fn canonicalize_chunk(coord: VoxelCoord) -> VoxelCoord {
+    let coord = VoxelCoord { x: coord.x as i16, y: coord.y as i16, z: coord.z as i16 };
     coord - (coord % (CHUNK_SIZE as i16))
 }
 
@@ -56,7 +71,7 @@ pub const CHUNK_SIZE_WORLD: f32 = CHUNK_SIZE as f32;
 /// Try and keep your voxels as small as possible to reduce memory usage; ideally they'd be 1 byte in size.
 pub trait Voxel: Copy + Send + Sync + 'static {
     fn empty() -> Self;
-    fn is_empty(&self) -> bool;
+    fn is_transparent(&self) -> bool;
     /// TODO switch to textures
     fn color(&self) -> Separate<Color>;
 }
@@ -64,21 +79,21 @@ pub trait Voxel: Copy + Send + Sync + 'static {
 /// A "voxel chunk" component.
 pub struct Chunk<V: Voxel> {
     /// Redundant with transform; both must be set correctly.
-    pub coord: ChunkCoord,
+    pub coord: VoxelCoord,
     pub voxels: [[[V; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE]
 }
 impl<V: Voxel> Chunk<V> {
-    pub fn empty(coord: ChunkCoord) -> Self {
+    pub fn empty(coord: VoxelCoord) -> Self {
         let voxel = V::empty();
         let voxels = [[[voxel; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
         Chunk { coord, voxels }
     }
     #[inline(always)]
-    fn index(&self, index: ChunkCoord) -> &V {
+    pub fn index(&self, index: VoxelCoord) -> &V {
         &self.voxels[index.x as usize][index.y as usize][index.z as usize]
     }
     #[inline(always)]
-    unsafe fn index_unchecked(&self, index: ChunkCoord) -> &V {
+    pub unsafe fn index_unchecked(&self, index: VoxelCoord) -> &V {
         &self.voxels.get_unchecked(index.x as usize)
                     .get_unchecked(index.y as usize)
                     .get_unchecked(index.z as usize)
@@ -87,80 +102,6 @@ impl<V: Voxel> Chunk<V> {
 }
 impl<V: Voxel> Component for Chunk<V> {
     type Storage = FlaggedStorage<Self, HashMapStorage<Self>>;
-}
-
-/// A global table of chunks, to allow easy lookup of neighbors.
-/// DOES NOT TRACK CHUNK MOVEMENT. idk why you'd even want that though.
-#[derive(Default, Debug)]
-pub struct ChunkTrackerResource {
-    // bidirectional mapping
-    coord_to_idx: FnvHashMap<ChunkCoord, Index>,
-    idx_to_coord: FnvHashMap<Index, ChunkCoord>
-}
-impl ChunkTrackerResource {
-    fn new() -> Self {
-        Default::default()
-    }
-
-    #[inline(always)]
-    fn get_chunk_idx_at_coord(&self, coord: Coord) -> Option<Index> {
-        self.coord_to_idx.get(&canonicalize_chunk(coord)).map(Clone::clone)
-    }
-}
-
-/// A system that registers new chunks in the ChunkTrackerResource.
-pub struct ChunkTrackerSystem<V: Voxel> {
-    inserted_ids: ReaderId<InsertedFlag>,
-    removed_ids: ReaderId<RemovedFlag>,
-    _phantom: PhantomData<V>
-}
-impl<V: Voxel> ChunkTrackerSystem<V> {
-    fn for_world(world: &World) -> Self {
-        let mut chunks = world.write_storage::<Chunk<V>>();
-        let mut inserted_ids = chunks.track_inserted();
-        let mut removed_ids = chunks.track_removed();
-
-        ChunkTrackerSystem {
-            inserted_ids, removed_ids, _phantom: PhantomData
-        }
-    }
-}
-
-impl<'a, V: Voxel> System<'a> for ChunkTrackerSystem<V> {
-    type SystemData = (
-        Entities<'a>,
-        ReadStorage<'a, Chunk<V>>,
-        Write<'a, ChunkTrackerResource>
-    );
-
-    fn run(&mut self, (entities, chunks, mut tracker): Self::SystemData) {
-        for removed in chunks.removed().read(&mut self.removed_ids) {
-            let idx = **removed;
-            let coord = *tracker.idx_to_coord.get(&idx).expect("removed but not present");
-
-            debug_assert!(tracker.idx_to_coord.contains_key(&idx));
-            debug_assert!(tracker.coord_to_idx.contains_key(&coord));
-
-            tracker.idx_to_coord.remove(&idx);
-            tracker.coord_to_idx.remove(&coord);
-        }
-        for inserted in chunks.inserted().read(&mut self.inserted_ids) {
-            let idx = **inserted;
-            let coord = chunks.get(entities.entity(idx)).expect("inserted but not present").coord;
-
-            debug_assert!(!tracker.idx_to_coord.contains_key(&idx));
-            debug_assert!(!tracker.coord_to_idx.contains_key(&coord));
-
-            tracker.idx_to_coord.insert(idx, coord);
-            tracker.coord_to_idx.insert(coord, idx);
-        }
-    }
-}
-
-pub struct ChunkMesherSystem {
-    inserted_ids: ReaderId<InsertedFlag>,
-    modified_ids: ReaderId<InsertedFlag>,
-    scratch: BitSet,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -173,7 +114,7 @@ impl Voxel for TestVoxel {
     fn empty() -> Self {
         TestVoxel::Air
     }
-    fn is_empty(&self) -> bool {
+    fn is_transparent(&self) -> bool {
         *self == TestVoxel::Air
     }
     fn color(&self) -> Separate<Color> {
@@ -192,35 +133,5 @@ mod tests {
     #[test]
     fn sizes() {
         assert!(CHUNK_SIZE < 256);
-    }
-
-    #[test]
-    fn test_tracker() {
-        let mut world = World::new();
-        world.register::<Chunk<TestVoxel>>();
-        world.add_resource(ChunkTrackerResource::new());
-
-        let mut dispatcher = DispatcherBuilder::new()
-            .with(ChunkTrackerSystem::<TestVoxel>::for_world(&world), "chunk_tracker", &[])
-            .build();
-
-        dispatcher.dispatch(&mut world.res);
-
-        // add entity
-        let coord = ChunkCoord::new(0, 0, 0);
-        let ent = world.create_entity().with(Chunk::<TestVoxel>::empty(coord)).build();
-        dispatcher.dispatch(&mut world.res);
-        {
-            let tracker = world.read_resource::<ChunkTrackerResource>();
-            assert_eq!(tracker.get_chunk_idx_at_coord(Coord::new(0., 0., 0.)), Some(ent.id()));
-        }
-
-        // remove entity
-        world.delete_entity(ent).unwrap();
-        dispatcher.dispatch(&mut world.res);
-        {
-            let tracker = world.read_resource::<ChunkTrackerResource>();
-            assert_eq!(tracker.get_chunk_idx_at_coord(Coord::new(0., 0., 0.)), None);
-        }
     }
 }
