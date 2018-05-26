@@ -97,6 +97,7 @@ pub struct Chunk<V: Voxel> {
 }
 impl<V: Voxel> Chunk<V> {
     pub fn empty(coord: VoxelCoord) -> Self {
+        assert_eq!(coord, canonicalize_chunk(coord), "improper chunk coordinate");
         let voxel = V::empty();
         let voxels = [[[voxel; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
         Chunk { coord, voxels }

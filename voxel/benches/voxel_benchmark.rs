@@ -9,15 +9,7 @@ use voxel::mesh::{mesh_layer, Direction, InProgress};
 use voxel::raycast::raycast;
 use voxel::{Chunk, Coord, TestVoxel, VoxelCoord, CHUNK_SIZE};
 
-fn mesh() {
-    let mut chunk = Chunk::<TestVoxel>::empty(VoxelCoord::new(0, 0, 0));
-
-    for i in 0..CHUNK_SIZE {
-        chunk.voxels[i][i][i] = TestVoxel::Air;
-        chunk.voxels[i][CHUNK_SIZE - i - 1][i] = TestVoxel::Air;
-        chunk.voxels[CHUNK_SIZE - i - 1][i][i] = TestVoxel::Air;
-        chunk.voxels[i][i][CHUNK_SIZE - i - 1] = TestVoxel::Air;
-    }
+fn mesh(chunk: &Chunk<TestVoxel>) {
 
     let mut in_progress = InProgress {
         color: vec![],
@@ -43,8 +35,10 @@ fn mesh() {
     }
 }
 
+#[inline]
 fn raycast_simple_16() {
     criterion::black_box(raycast(
+        VoxelCoord::new(0, 0, 0),
         Coord::new(0.0, 0.0, 0.0),
         Coord::new(0.37, 0.299, 0.936),
         VoxelCoord::new(-16, -16, -16),
@@ -54,7 +48,17 @@ fn raycast_simple_16() {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("mesh 1", |b| b.iter(|| mesh()));
+    c.bench_function("mesh 1", |b| {
+        let mut chunk = Chunk::<TestVoxel>::empty(VoxelCoord::new(0, 0, 0));
+
+        for i in 0..CHUNK_SIZE {
+            chunk.voxels[i][i][i] = TestVoxel::Air;
+            chunk.voxels[i][CHUNK_SIZE - i - 1][i] = TestVoxel::Air;
+            chunk.voxels[CHUNK_SIZE - i - 1][i][i] = TestVoxel::Air;
+            chunk.voxels[i][i][CHUNK_SIZE - i - 1] = TestVoxel::Air;
+        }
+        b.iter(|| mesh(&chunk))
+    });
     c.bench_function("raycast_simple_16 1", |b| b.iter(|| raycast_simple_16()));
 }
 

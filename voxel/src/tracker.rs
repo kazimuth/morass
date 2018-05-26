@@ -29,11 +29,12 @@ impl ChunkTracker {
 
     pub fn get_chunk<'a, V: Voxel>(
         &self,
-        chunks: &'a ReadStorage<Chunk<V>>,
+        chunk_storage: &'a ReadStorage<Chunk<V>>,
         coord: VoxelCoord,
     ) -> Option<&'a Chunk<V>> {
-        self.get_chunk_ent(coord).and_then(|ent| chunks.get(ent))
+        self.get_chunk_ent(coord).and_then(|ent| chunk_storage.get(ent))
     }
+
 }
 
 /// A system that registers new chunks in the ChunkTracker.

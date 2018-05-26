@@ -207,8 +207,12 @@ pub fn mesh_chunk<V: Voxel>(
         let adjacent_coord = coord + NORMALS[i] * CHUNK_SIZE as i16;
         let adjacent = tracker.get_chunk(chunks, adjacent_coord).unwrap_or(&empty);
 
-        // TODO
-        mesh_layer(center, start, adjacent, start, *direction, &mut result);
+        let (center_layer, adjacent_layer) = if BACKWARDS[i] {
+            (0, CHUNK_SIZE as i16 - 1)
+        } else {
+            (CHUNK_SIZE as i16 - 1, 0)
+        };
+        mesh_layer(center, center_layer, adjacent, adjacent_layer, *direction, &mut result);
     }
 
     let InProgress {
