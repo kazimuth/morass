@@ -82,11 +82,11 @@ pub const CHUNK_SIZE_WORLD: f32 = CHUNK_SIZE as f32;
 /// Must be copy: if you want to have stuff in your individual voxels that need heap-allocated stuff,
 /// they should be their own entities.
 /// Try and keep your voxels as small as possible to reduce memory usage; ideally they'd be 1 byte in size.
+/// Default should return an empty voxel.
 pub trait Voxel: Copy + Debug + Default + Send + Sync + 'static {
-    fn empty() -> Self;
     fn is_transparent(&self) -> bool;
-    /// TODO switch to textures
-    fn color(&self) -> Separate<Color>;
+    /// TODO switch to textures & meshes
+    fn color(&self) -> [f32; 4];
 }
 
 /// A "voxel chunk" component.
@@ -98,7 +98,7 @@ pub struct Chunk<V: Voxel> {
 impl<V: Voxel> Chunk<V> {
     pub fn empty(coord: VoxelCoord) -> Self {
         assert_eq!(coord, canonicalize_chunk(coord), "improper chunk coordinate");
-        let voxel = V::empty();
+        let voxel = V::default();
         let voxels = [[[voxel; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
         Chunk { coord, voxels }
     }
@@ -141,17 +141,14 @@ impl Default for TestVoxel {
     }
 }
 impl Voxel for TestVoxel {
-    fn empty() -> Self {
-        TestVoxel::Air
-    }
     fn is_transparent(&self) -> bool {
         *self == TestVoxel::Air
     }
-    fn color(&self) -> Separate<Color> {
+    fn color(&self) -> [f32; 4] {
         match *self {
-            TestVoxel::Air => Separate::new([0., 0., 0., 0.]),
-            TestVoxel::Rock => Separate::new([0.2, 0.2, 0.2, 1.]),
-            TestVoxel::Grass => Separate::new([0., 8., 0., 1.]),
+            TestVoxel::Air => [0., 0., 0., 0.],
+            TestVoxel::Rock => [0.2, 0.2, 0.2, 1.],
+            TestVoxel::Grass => [0., 8., 0., 1.],
         }
     }
 }

@@ -5,4 +5,7 @@ authors = ["James Gilles <jhgilles@mit.edu>"]
 
 [dependencies]
 amethyst = { git = "https://github.com/amethyst/amethyst.git", branch = "develop" }
-voxel = { path = "../voxel" }
+morass_voxel = { path = "../morass_voxel" }
+winit = "0.13.1"
+cgmath = "0.16.1"
+log = "0.4"

@@ -1,0 +1,7 @@
+[package]
+name = "morass_voxel"
+version = "0.1.0"
+authors = ["James Gilles <jhgilles@mit.edu>"]
+
+[dependencies]
+voxel = { path = "../voxel" }

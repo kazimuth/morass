@@ -5,6 +5,7 @@ use super::{canonicalize_chunk, Chunk, Voxel, VoxelCoord};
 use fnv::FnvHashMap;
 use specs::prelude::*;
 use specs::world::Index;
+use specs::storage::MaskedStorage;
 use std::marker::PhantomData;
 
 /// A global table of chunks, to allow easy lookup of neighbors.
@@ -39,20 +40,14 @@ impl ChunkTracker {
 
 /// A system that registers new chunks in the ChunkTracker.
 pub struct ChunkTrackerSystem<V: Voxel> {
-    inserted_ids: ReaderId<InsertedFlag>,
-    removed_ids: ReaderId<RemovedFlag>,
+    ids: Option<(ReaderId<InsertedFlag>, ReaderId<RemovedFlag>)>,
     _phantom: PhantomData<V>,
 }
 impl<V: Voxel> ChunkTrackerSystem<V> {
-    pub fn for_world(world: &World) -> Self {
-        let mut chunks = world.write_storage::<Chunk<V>>();
-        let inserted_ids = chunks.track_inserted();
-        let removed_ids = chunks.track_removed();
-
+    pub fn new() -> Self {
         ChunkTrackerSystem {
-            inserted_ids,
-            removed_ids,
-            _phantom: PhantomData,
+            ids: None,
+            _phantom: PhantomData
         }
     }
 }
@@ -63,8 +58,16 @@ impl<'a, V: Voxel> System<'a> for ChunkTrackerSystem<V> {
         Write<'a, ChunkTracker>,
     );
 
+    fn setup(&mut self, resources: &mut Resources) {
+        Self::SystemData::setup(resources);
+        let mut chunks = WriteStorage::<Chunk<V>>::fetch(resources);
+        self.ids = Some((chunks.track_inserted(), chunks.track_removed()));
+    }
+
     fn run(&mut self, (entities, chunks, mut tracker): Self::SystemData) {
-        for removed in chunks.removed().read(&mut self.removed_ids) {
+        let &mut (ref mut inserted_ids, ref mut removed_ids) = self.ids.as_mut().unwrap();
+
+        for removed in chunks.removed().read(removed_ids) {
             let idx = **removed;
             let coord = *tracker
                 .idx_to_coord
@@ -77,7 +80,7 @@ impl<'a, V: Voxel> System<'a> for ChunkTrackerSystem<V> {
             tracker.idx_to_coord.remove(&idx);
             tracker.coord_to_ent.remove(&coord);
         }
-        for inserted in chunks.inserted().read(&mut self.inserted_ids) {
+        for inserted in chunks.inserted().read(inserted_ids) {
             let idx = **inserted;
             let ent = entities.entity(idx);
             let coord = chunks.get(ent).expect("inserted but not present").coord;
@@ -130,16 +133,18 @@ mod tests {
     #[test]
     fn test_tracker() {
         let mut world = World::new();
+        println!("register");
         world.register::<Chunk<TestVoxel>>();
         world.add_resource(ChunkTracker::new());
 
         let mut dispatcher = DispatcherBuilder::new()
             .with(
-                ChunkTrackerSystem::<TestVoxel>::for_world(&world),
+                ChunkTrackerSystem::<TestVoxel>::new(),
                 "chunk_tracker",
                 &[],
             )
             .build();
+        dispatcher.setup(&mut world.res);
 
         dispatcher.dispatch(&mut world.res);
 

@@ -11,7 +11,7 @@ use std::marker::PhantomData;
 use std::time::Duration;
 
 use amethyst::assets::{AssetStorage, Handle, Loader};
-use amethyst::renderer::{Color, ComboMeshCreator, Material, Mesh, Normal, Position, Separate};
+use amethyst::renderer::{Color, ComboMeshCreator, Material, Mesh, Normal, Position, Separate, MaterialDefaults};
 use cgmath::Vector3;
 use hibitset::BitSetLike;
 use soft_time_limit::TimeLimiter;
@@ -150,7 +150,7 @@ pub fn mesh_layer<V: Voxel>(
                 let face_center: Vector3<f32> = loc1.cast().unwrap() + halfnormalf;
 
                 for p in positions.iter() {
-                    in_progress.color.push(kind1.color());
+                    in_progress.color.push(Separate::new(kind1.color()));
                     in_progress
                         .position
                         .push(Separate::new((face_center + p).into()));
@@ -181,7 +181,7 @@ pub fn mesh_chunk<V: Voxel>(
 
     let empty = Chunk {
         coord: VoxelCoord::new(0, 0, 0),
-        voxels: [[[V::empty(); CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
+        voxels: [[[V::default(); CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
     };
 
     for direction in Direction::all().into_iter() {
@@ -232,29 +232,17 @@ pub fn mesh_chunk<V: Voxel>(
 /// Only mutably take a chunk if you're actually modifying it.
 /// Otherwise you'll just re-mesh everything.
 pub struct ChunkMesherSystem<V: Voxel> {
-    material: Material,
-
-    inserted_ids: ReaderId<InsertedFlag>,
-    modified_ids: ReaderId<ModifiedFlag>,
-    removed_ids: ReaderId<RemovedFlag>,
-
-    // TODO maybe this can be composed in some other way...
     time_limiter: TimeLimiter,
     time_limit: Duration,
-
+    ids: Option<(ReaderId<InsertedFlag>, ReaderId<ModifiedFlag>, ReaderId<RemovedFlag>)>,
     to_do: BitSet,
     _phantom: PhantomData<V>,
 }
 
 impl<V: Voxel> ChunkMesherSystem<V> {
-    pub fn for_world_with(world: &World, time_limit: Duration, material: Material) -> Self {
-        let mut chunks = world.write_storage::<Chunk<V>>();
-
+    pub fn new(time_limit: Duration) -> Self {
         ChunkMesherSystem {
-            material,
-            inserted_ids: chunks.track_inserted(),
-            modified_ids: chunks.track_modified(),
-            removed_ids: chunks.track_removed(),
+            ids: None,
             time_limiter: TimeLimiter::new(),
             time_limit,
             to_do: BitSet::new(),
@@ -269,18 +257,26 @@ impl<'a, V: Voxel> System<'a> for ChunkMesherSystem<V> {
         ReadExpect<'a, ChunkTracker>,
         ReadExpect<'a, Loader>,
         ReadExpect<'a, AssetStorage<Mesh>>,
+        ReadExpect<'a, MaterialDefaults>,
         ReadStorage<'a, Chunk<V>>,
         WriteStorage<'a, Handle<Mesh>>,
         WriteStorage<'a, Material>,
     );
 
+    fn setup(&mut self, resources: &mut Resources) {
+        Self::SystemData::setup(resources);
+        let mut chunks = WriteStorage::<Chunk<V>>::fetch(resources);
+        self.ids = Some((chunks.track_inserted(), chunks.track_modified(), chunks.track_removed()));
+    }
+
     fn run(
         &mut self,
-        (entities, tracker, loader, assets, chunks, mut meshes, mut materials): Self::SystemData,
+        (entities, tracker, loader, assets, mat, chunks, mut meshes, mut materials): Self::SystemData,
     ) {
-        chunks.populate_inserted(&mut self.inserted_ids, &mut self.to_do);
-        chunks.populate_modified(&mut self.modified_ids, &mut self.to_do);
-        for removed in chunks.removed().read(&mut self.removed_ids) {
+        let &mut (ref mut inserted_ids, ref mut modified_ids, ref mut removed_ids) = self.ids.as_mut().unwrap();
+        chunks.populate_inserted(inserted_ids, &mut self.to_do);
+        chunks.populate_modified(modified_ids, &mut self.to_do);
+        for removed in chunks.removed().read(removed_ids) {
             let idx = **removed;
             self.to_do.remove(idx);
         }
@@ -288,10 +284,10 @@ impl<'a, V: Voxel> System<'a> for ChunkMesherSystem<V> {
         let mut completed = Vec::new();
         {
             let mut iter = (&self.to_do).iter();
-            let mat = self.material.clone();
             self.time_limiter.repeat_with_budget(self.time_limit, || {
                 if let Some(idx) = iter.next() {
                     let ent = entities.entity(idx);
+                    info!("meshing {:?}", ent);
                     let chunk = chunks.get(ent);
                     if let None = chunk {
                         return true;
@@ -304,10 +300,12 @@ impl<'a, V: Voxel> System<'a> for ChunkMesherSystem<V> {
                         .insert(ent, mesh)
                         .map_err(|e| error!("mesh insertion failed! {:?}", e));
                     let _ = materials
-                        .insert(ent, mat.clone())
+                        .insert(ent, mat.0.clone())
                         .map_err(|_| error!("material insertion failed!"));
 
                     completed.push(idx);
+
+                    info!("meshed {:?}", ent);
                     true
                 } else {
                     false

@@ -1,8 +1,11 @@
 [workspace]
-members = ['soft_time_limit', 'voxel', 'main']
+members = ['soft_time_limit', 'voxel', 'morass_voxel', 'main']
 
 [profile.dev]
 opt-level = 1
+
+[profile.bench]
+debug = true
 
 [patch.crates-io]
 coreaudio-sys = { git = "https://github.com/RustAudio/coreaudio-sys.git", rev = "cf3a8321f461655a304ee8aa3139d5c5c88fd379" }

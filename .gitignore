@@ -1,0 +1,8 @@
+target/
+*/target/
+.vscode/
+*~
+*.swo
+*.swp
+.gdb_history
+assets/
