@@ -3,20 +3,18 @@
 extern crate amethyst;
 extern crate morass_voxel;
 
-use morass_voxel::{MorassVoxel, MorassChunk, VoxelCoord, Coord};
+use morass_voxel::{MorassVoxel, MorassChunk, VoxelCoord};
 
 use std::time::Duration;
 
-use amethyst::assets::Loader;
 use amethyst::core::cgmath::Deg;
 use amethyst::core::transform::GlobalTransform;
 use amethyst::ecs::prelude::World;
 use amethyst::prelude::*;
 use amethyst::renderer::{AmbientColor, Camera, DisplayConfig, DrawShadedSeparate, Event, KeyboardInput,
-                         Light, Mesh, Pipeline, PointLight, PosNormTex, Projection, RenderBundle,
+                         Light, Pipeline, PointLight, Projection, RenderBundle,
                          Rgba, Stage, VirtualKeyCode, WindowEvent};
 
-const SPHERE_COLOUR: [f32; 4] = [0.0, 0.0, 1.0, 1.0]; // blue
 const AMBIENT_LIGHT_COLOUR: Rgba = Rgba(0.1, 0.1, 0.1, 1.0); // near-black
 const POINT_LIGHT_COLOUR: Rgba = Rgba(1.0, 1.0, 1.0, 1.0); // white
 const BACKGROUND_COLOUR: [f32; 4] = [0.0, 0.0, 0.0, 0.0]; // black
